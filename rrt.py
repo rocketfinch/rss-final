@@ -79,13 +79,18 @@ def trace_path(indx_last_vertex, vertices, parent_indices, npoints):
     return False, np.flip(path, axis=0)
 
 
-def path_indices(indx_last_vertex, parent_indices, npoints):
+def path_indices(
+    indx_last_vertex: int,
+    parent_indices,
+    npoints: int,
+    indx_first_vertex: int = 0,
+):
     path = [indx_last_vertex]
     next = indx_last_vertex
     while True:
         next = parent_indices[next]
         path.append(next)
-        if next == 0:
+        if next == indx_first_vertex:
             break
     return np.flip(path)
 
@@ -219,7 +224,7 @@ def rrt_path_plan(
         q_nearest = vertices[i_qnearest, :]
 
         # calculate new pose
-        q_path, q_path_full, stat = calculate_q_path_dubins(
+        q_path, q_path_full, q_stat = calculate_q_path_dubins(
             dubins, q_nearest, q_target
         )
 

@@ -6,6 +6,7 @@ import roboticstoolbox as rtb
 from spatialmath import Polygon2
 
 from rrt import *
+from rrt_star import *
 
 
 def create_map_with_obstacles(
@@ -83,10 +84,10 @@ def plot_map(map: rtb.PolygonMap):
 def main():
 
     obstacles = list()
-    # obstacles.append(np.transpose(np.array([[5, 4], [5, 6], [6, 6], [6, 4]])))
-    # obstacles.append(
-    #     np.transpose(np.array([[5, 3], [5, -4], [6, -4], [6, 3]]))
-    # )
+    obstacles.append(np.transpose(np.array([[5, 4], [5, 6], [6, 6], [6, 4]])))
+    obstacles.append(
+        np.transpose(np.array([[5, 3], [5, -4], [6, -4], [6, 3]]))
+    )
 
     polygon_map = create_map_with_obstacles(
         range_start=-1, range_end=10, obst_list=obstacles
@@ -123,7 +124,10 @@ def main():
     plot_car(car, q_goal)
     # plot_path(path)
 
-    rtt_status, rtt_path = rrt_path_plan(polygon_map, car, q_start, q_goal)
+    # rtt_status, rtt_path = rrt_path_plan(polygon_map, car, q_start, q_goal)
+    rtt_star_status, rtt_star_path = rrt_star_path_plan(
+        polygon_map, car, q_start, q_goal, rrt_star_radius=8
+    )
     # print(rtt_path)
     # plot_path(rtt_path)
 
