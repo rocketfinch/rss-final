@@ -9,29 +9,27 @@ from rrt import *
 from rrt_star import *
 
 
-def create_map_with_obstacles(
-    range_start: float, range_end: float, obst_list: list
-):
+def create_map_with_obstacles(range_start: float, range_end: float, obst_list: list):
     map = rtb.PolygonMap(workspace=[range_start, range_end])
     for obst in obst_list:
         map.add(obst)
     return map
 
 
-def plot_pose(pose: np.ndarray, name: str):
+def plot_pose(pose: np.ndarray, name: str, color: str):
     length = 0.4
     dx = np.cos(pose[2]) * length
     dy = np.sin(pose[2]) * length
-    plt.arrow(pose[0], pose[1], dx, dy, width=0.05)
+    plt.arrow(pose[0], pose[1], dx, dy, width=0.05, color=color)
 
 
-def plot_car(car: rtb.Bicycle, pose: np.ndarray):
+def plot_car(car: rtb.Bicycle, pose: np.ndarray, facecolor: str, edgecolor: str):
     car_poly = car.polygon(pose).vertices()
     plt.fill(
         car_poly[0, :],
         car_poly[1, :],
-        facecolor="lightsalmon",
-        edgecolor="orangered",
+        facecolor=facecolor,
+        edgecolor=edgecolor,
         linewidth=3,
         alpha=0.5,
     )
@@ -45,7 +43,6 @@ def plot_path(path: np.ndarray, plot_arrows: bool = True, subsample=4):
         arrows = path[::subsample, :]
         for i in range(arrows.shape[0]):
             pose = arrows[i, :]
-            # print(pose)
             length = arrow_size
             dx = np.cos(pose[2]) * length
             dy = np.sin(pose[2]) * length
@@ -60,7 +57,7 @@ def plot_path(path: np.ndarray, plot_arrows: bool = True, subsample=4):
                 alpha=0.35,
                 edgecolor=None,
                 linewidth=None,
-                facecolor="green",
+                facecolor="darkgreen",
             )
 
 
@@ -81,19 +78,29 @@ def plot_map(map: rtb.PolygonMap):
     plt.ylim([map.workspace[2], map.workspace[3]])
 
 
-def main():
+def main(seed=None):
 
     obstacles = list()
-    obstacles.append(np.transpose(np.array([[5, 4], [5, 6], [6, 6], [6, 4]])))
-    obstacles.append(
-        np.transpose(np.array([[5, 3], [5, -4], [6, -4], [6, 3]]))
-    )
+    # Leave obstacles commented below for unconstrained (no obstacle) scenario
 
-    polygon_map = create_map_with_obstacles(
-        range_start=-1, range_end=10, obst_list=obstacles
-    )
+    # Obstacles for the simple obstacle scenario
+    # obstacles.append(np.transpose(np.array([[5, 4], [5, 6], [6, 6], [6, 4]])))
+    # obstacles.append(np.transpose(np.array([[5, 2.5], [5, -4], [6, -4], [6, 2.5]])))
 
+    # Obstacles for the parking-lot scenario
+    # obstacle_centers = np.array([[1, 7], [5, 7], [7, 7], [0, 3], [2, 3], [4, 3], [6, 3]])
+    # for i in range(obstacle_centers.shape[0]):
+    #     size = 0.75
+    #     obstacles.append(np.transpose(size * np.array([[-1, -1], [-1, 1], [1, 1], [1, -1]]) + obstacle_centers[i]))
+
+    polygon_map = create_map_with_obstacles(range_start=-1, range_end=10, obst_list=obstacles)
+
+    # Starting position for simple obstacle scenario and unconstrained
     q_start = np.array([8, 2, pi / 2])
+
+    # Starting position for parking lot scenario
+    # q_start = np.array([5, 1, 0])
+
     q_goal = np.array([3, 7, pi / 2])
 
     l, w = 1, 0.5
@@ -109,89 +116,38 @@ def main():
     car_shape = Polygon2(np.transpose(car_shape_array))
     car = rtb.Bicycle(polygon=car_shape)
 
-    # plot(polygon_map, q_start, q_goal, car)
-    # print(car)
+    plot_pose(q_start, "start", "green")
+    plot_pose(q_goal, "end", "orangered")
+    plot_car(car, q_start, facecolor="green", edgecolor="darkgreen")
+    plot_car(car, q_goal, facecolor="lightsalmon", edgecolor="orangered")
 
-    dubins = rtb.DubinsPlanner(curvature=1, stepsize=0.1)
-    dubins.plan()
-    path, status = dubins.query(start=q_start, goal=q_goal)
-    # dubins.plot(path=path, block=True)
-    # print(path)
-    # print("dubin path length:", status.length)
-
-    # plot_pose(q_start, "start")
-    # plot_pose(q_goal, "end")
-    plot_car(car, q_goal)
-    # plot_path(path)
-
+    # RRT can also be run by turning off the flags in rrt_star.py
     # rtt_status, rtt_path = rrt_path_plan(polygon_map, car, q_start, q_goal)
-    rtt_star_status, rtt_star_path = rrt_star_path_plan(
-        polygon_map, car, q_start, q_goal, rrt_star_radius=8
-    )
-    # print(rtt_path)
-    # plot_path(rtt_path)
 
-    # print("dubins path shape:", path.shape)
-    # print("rtt path shape:", rtt_path.shape)
+    if seed:
+        np.random.seed(seed)
+
+    rtt_star_status, rtt_star_path, rtt_star_path_length = rrt_star_path_plan(polygon_map, car, q_start, q_goal)
 
     plot_map(polygon_map)
 
     plt.show()
 
-    # q_target = generate_qrandom_free(polygon_map, car)
-    # print("q_start shape:", q_start.shape)
-    # print("q_goal shape:", q_goal.shape)
-    # print("q_target:", q_target)
-    # print("q_target shape:", q_target.shape)
-
-    # print(
-    #     "qpath from start to random target:",
-    #     calculate_q_path_dubins(dubins, q_start, q_target),
-    # )
-
-    # nbrs = knnsearch(path, q_target, 2)
-
-    # print("knnsearch around target", nbrs)
-    # print(nbrs[0][0])
-
-    # print(
-    #     "is path in collison (should say True):",
-    #     path_in_collision(path, polygon_map, car),
-    # )
-
-    # print(
-    #     "is (first ten steps of) path in collison (should say False):",
-    #     path_in_collision(path[:10, :], polygon_map, car),
-    # )
-
-    # print(
-    #     "is collison:",
-    #     polygon_map.iscollision(car.polygon(q_goal)),
-    # )
-
-    # rrt = rtb.RRTPlanner(map=map, vehicle=car, npoints=50)
-    # print("flag1")
-    # rrt.plan(goal=q_goal, animate=False)
-    # print("flag2")
-    # path, status = rrt.query(start=q_start)
-    # print("flag3")
-    # rrt.plot(path=path, background=True, block=True)
-    # print("Path:", path)
-    # print("Status:", status)
-
-    # car.run(animate=True)
+    return rtt_star_status, rtt_star_path, rtt_star_path_length
 
 
 if __name__ == "__main__":
     main()
 
-    # try:
-    #     main()
-    #     plt.ion()
+    # file = open("asdf.txt", "w")
 
-    #     while True:
-    #         plt.show()
-    #         break
-    # except KeyboardInterrupt:
-    #     print("")
-    #     sys.exit(0)
+    # for seed in range(1, 11):
+    #     runstatus, runpath, runpathlength = main(seed)
+    #     file.write("STATUS: ")
+    #     file.write(str(runstatus))
+    #     file.write("\n")
+    #     file.write("LENGTH: ")
+    #     file.write(str(runpathlength))
+    #     file.write("\n")
+
+    # file.close()

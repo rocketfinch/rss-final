@@ -1,39 +1,30 @@
 from rrt import *
+import numpy as np
 
-USE_EUC_KNN_MODIFIED = False
+NODE_IMPROVEMENT = True
+NEIGHBOR_IMPROVEMENT = False
+
+
+def compute_path_dist(path: np.ndarray):
+    deltas = np.diff(path, axis=0)
+    dists = np.sqrt(deltas[:, 0] * deltas[:, 0] + deltas[:, 1] * deltas[:, 1])
+    return np.sum(dists)
 
 
 def knnsearch_modified_rttstar(
     dubins: rtb.DubinsPlanner,
     vertices: np.ndarray,
     q_target: np.ndarray,
-    rrt_star_radius: float = 8,
+    rrt_star_radius: float = 3,
 ):
-
-    if USE_EUC_KNN_MODIFIED:
-        nbrs = NearestNeighbors(radius=rrt_star_radius).fit(vertices)
-        q_near_dists, i_qnear_all = nbrs.radius_neighbors(
-            [q_target], radius=rrt_star_radius, sort_results=True
-        )
-        return i_qnear_all[0], q_near_dists[0]
-
-    dists = np.zeros(vertices.shape[0])
+    all_neighbors = []
 
     for iV in range(vertices.shape[0]):
         dpath, stat = dubins.query(start=vertices[iV], goal=q_target)
-        dists[iV] = stat.length
-
-    # closest = np.argmin(dists)
-    all_neighbors = []
-    for iV in range(vertices.shape[0]):
-        if dists[iV] <= rrt_star_radius:
+        if stat.length <= rrt_star_radius:
             all_neighbors.append(iV)
 
-    # print("closest", closest, vertices[closest])
-    return all_neighbors, dists
-    # return [[vertices[closest]]]
-
-    # dists[i] =
+    return all_neighbors
 
 
 def rrt_star_path_plan(
@@ -41,29 +32,32 @@ def rrt_star_path_plan(
     vehicle: rtb.VehicleBase,
     q_start: np.ndarray,
     q_goal: np.ndarray,
-    rrt_star_radius: float = 8,  # MODIFIED FROM RRT PLANNER
-    npoints: int = 200,
+    rrt_star_radius: float = 3,
+    npoints: int = 230,
     rtt_stepsize: float = 4,
-    bias: float = 0.01,
+    bias: float = 0.02,
 ):
-    if pmap.iscollision(vehicle.polygon(q_start)) or pmap.iscollision(
-        vehicle.polygon(q_goal)
-    ):
-        return False, []
+    if pmap.iscollision(vehicle.polygon(q_start)) or pmap.iscollision(vehicle.polygon(q_goal)):
+        return False, [], 0
 
     parent_indices = np.zeros((npoints,), dtype=np.uint8)
     vertices = np.zeros((npoints, 3))
     edges = [[]]
     edges_cost = [0]
     vertices[0, :] = q_start
-    i_vertex_to_fill = 1
+    indx_vertex_to_fill = 1
 
-    dubins = rtb.DubinsPlanner(
-        curvature=2, stepsize=rtt_stepsize / DUBIN_FACTOR
-    )
+    overwritten_edges = []
+    new_edges = []
+
+    dubins = rtb.DubinsPlanner(curvature=2, stepsize=rtt_stepsize / DUBIN_FACTOR)
     dubins.plan()
 
-    while i_vertex_to_fill < npoints:
+    def total_path_cost(vertex_index):
+        indices = path_indices(vertex_index, parent_indices[: indx_vertex_to_fill + 1], None)
+        return sum(map(lambda i: edges_cost[i], indices))
+
+    while indx_vertex_to_fill < npoints:
         if np.random.random() < bias:
             q_target = q_goal
         else:
@@ -75,171 +69,137 @@ def rrt_star_path_plan(
             markersize=5,
             markeredgecolor="pink",
             markerfacecolor="pink",
+            alpha=0.8,
         )
 
         # retrieve k-nearest neighbors by index in the filled part of vertices
-        i_qnear_all = knnsearch(
-            dubins, vertices[:i_vertex_to_fill, :], q_target, k_nearest=1
-        )[0]
+        indx_qnear_all = nearest_neighbor_search(dubins, vertices[:indx_vertex_to_fill, :], q_target)[0]
 
         # retrieve index and value of nearest neighbor
-        i_qnearest = i_qnear_all[0]
-        q_nearest = vertices[i_qnearest, :]
+        indx_qnearest = indx_qnear_all[0]
+        q_nearest = vertices[indx_qnearest, :]
 
         # calculate new pose
-        q_path, q_path_full, q_stat = calculate_q_path_dubins(
-            dubins, q_nearest, q_target
-        )
-
-        # plt.plot(
-        #     q_path_full[:, 0],
-        #     q_path_full[:, 1],
-        #     linewidth=1,
-        #     alpha=0.7,
-        #     color="grey",
-        # )
-
-        # --------- BELOW MODIFIED FROM RTT PLANNER ---------
+        q_path, q_path_full, q_stat = calculate_q_path_dubins(dubins, q_nearest, q_target)
 
         # collision check before adding to tree
-        if not path_in_collision(q_path, pmap, vehicle):
-            # if not pmap.iscollision(vehicle.polygon(q_new)):
+        if len(q_path) != 0 and not path_in_collision(q_path, pmap, vehicle):
             q_new = q_path[-1, :]
-            vertices[i_vertex_to_fill, :] = q_new
-            # parent_indices[i_vertex_to_fill] = i_qnearest
+            vertices[indx_vertex_to_fill, :] = q_new
 
-            q_new_cost = edges_cost[i_qnearest] + sum(
-                q_stat.seglengths[:DUBIN_SEGMENT_END]
-            )  # NEW!
-            # edges.append(q_path)
-            # edges_cost.append(q_new_cost)  # NEW!
+            q_new_cost = total_path_cost(indx_qnearest) + compute_path_dist(q_path)
 
-            # print("q_path_full shape:", q_path_full.shape)
-            # print("q_path shape:", q_path.shape)
-            # print("q_stat.length:", q_stat.length)
-            # print("q_stat.seglengths:", q_stat.seglengths)
-            # print("q_stat.seglengths shape:", len(q_stat.seglengths))
-            # print(
-            #     "q_stat.seglengths CLIPPED:",
-            #     q_stat.seglengths[:DUBIN_SEGMENT_END],
-            # )
-
-            # print(
-            #     "q_stat.seglengths CLIPPED shape",
-            #     len(q_stat.seglengths[:DUBIN_SEGMENT_END]),
-            # )
-
-            all_neighbors, dists = knnsearch_modified_rttstar(
+            all_neighbors = knnsearch_modified_rttstar(
                 dubins,
-                vertices[:i_vertex_to_fill, :],
+                vertices[:indx_vertex_to_fill, :],
                 q_new,
                 rrt_star_radius=8,
             )
 
+            q_min_path = q_path
             q_min_cost = q_new_cost
-            i_qmin = i_qnearest
+            indx_qmin = indx_qnearest
+            best_edge_cost = compute_path_dist(q_path)
 
-            for iNbr in range(len(all_neighbors)):
-                iq_neighbor = all_neighbors[iNbr]
-                q_neighbor = vertices[iq_neighbor, :]
+            if NODE_IMPROVEMENT:
+                for iNbr in range(len(all_neighbors)):
+                    indx_qneighbor = all_neighbors[iNbr]
+                    q_neighbor = vertices[indx_qneighbor, :]
 
-                qneighbor_to_qnew_path, qneighbor_to_qnew_stat = dubins.query(
-                    start=q_neighbor, goal=q_new
-                )
+                    (
+                        qneighbor_to_qnew_path,
+                        qneighbor_to_qnew_stat,
+                    ) = dubins.query(start=q_neighbor, goal=q_new)
 
-                if (
-                    not path_in_collision(
-                        qneighbor_to_qnew_path, pmap, vehicle
-                    )
-                ) and (
-                    edges_cost[iq_neighbor] + qneighbor_to_qnew_stat.length
-                    < q_min_cost
-                ):
-                    i_qmin = iq_neighbor
-                    q_min_cost = (
-                        edges_cost[iq_neighbor]
-                        + qneighbor_to_qnew_stat.length
-                    )
-                    q_min_path = qneighbor_to_qnew_path
+                    if (not path_in_collision(qneighbor_to_qnew_path, pmap, vehicle)) and (
+                        # edges_cost[indx_qneighbor]
+                        # + qneighbor_to_qnew_stat.length
+                        # < q_min_cost
+                        total_path_cost(indx_qneighbor) + qneighbor_to_qnew_stat.length
+                        < q_min_cost
+                    ):
+                        indx_qmin = indx_qneighbor
+                        q_min_cost = total_path_cost(indx_qneighbor) + qneighbor_to_qnew_stat.length
+                        q_min_path = qneighbor_to_qnew_path
+                        best_edge_cost = qneighbor_to_qnew_stat.length
+                        # print("IMPROVE1")
 
             edges.append(q_min_path)
-            edges_cost.append(q_min_cost)
-            parent_indices[i_vertex_to_fill] = i_qmin
+            edges_cost.append(best_edge_cost)
+            parent_indices[indx_vertex_to_fill] = indx_qmin
 
-            for iNbr in range(len(all_neighbors)):
-                iq_neighbor = all_neighbors[iNbr]
-                q_neighbor = vertices[iq_neighbor, :]
+            if NEIGHBOR_IMPROVEMENT:
+                for iNbr in range(len(all_neighbors)):
+                    indx_qneighbor = all_neighbors[iNbr]
+                    q_neighbor = vertices[indx_qneighbor, :]
 
-                qnew_to_qneighbor_path, qnew_to_qneighbor_stat = dubins.query(
-                    start=q_new, goal=q_neighbor
-                )
+                    (
+                        qnew_to_qneighbor_path,
+                        qnew_to_qneighbor_stat,
+                    ) = dubins.query(start=q_new, goal=q_neighbor)
 
-                if (
-                    not path_in_collision(
-                        qnew_to_qneighbor_path, pmap, vehicle
-                    )
-                ) and (
-                    q_new_cost + qnew_to_qneighbor_stat.length
-                    < edges_cost[iq_neighbor]
-                ):
-                    q_parent = parent_indices[iq_neighbor]
-                    parent_indices[iq_neighbor] = i_vertex_to_fill
-                    edges[iq_neighbor] = qnew_to_qneighbor_path
+                    if (not path_in_collision(qnew_to_qneighbor_path, pmap, vehicle)) and (
+                        q_min_cost + qnew_to_qneighbor_stat.length
+                        # < edges_cost[indx_qneighbor]
+                        < total_path_cost(indx_qneighbor)
+                    ):
+                        # Save copies of the new & overwritten edges to visualize the tree diff
+                        overwritten_edges.append(edges[indx_qneighbor])
+                        new_edges.append(qnew_to_qneighbor_path)
 
-                # qneigbor_to_qnew_cost = dists[iNbr]
+                        # q_parent = parent_indices[indx_qneighbor]
+                        parent_indices[indx_qneighbor] = indx_vertex_to_fill
+                        edges[indx_qneighbor] = qnew_to_qneighbor_path
+                        # edges_cost[indx_qneighbor] = (
+                        #     q_min_cost + qnew_to_qneighbor_stat.length
+                        # )
+                        edges_cost[indx_qneighbor] = qnew_to_qneighbor_stat.length
 
-                # if (
-                #     q_new_cost + qneigbor_to_qnew_cost
-                #     < edges_cost[iq_neighbor]
-                # ):
-                #     edges_cost[iq_neighbor] = (
-                #         q_new_cost + qneigbor_to_qnew_cost
-                #     )
-                #     edges[iq_neighbor] = np.concatenate(
-                #         edges[i_qnearest], q_path
-                #     )
-                #     parent_indices[iq_neighbor] = i_vertex_to_fill
+                        print("IMPROVE2")
 
-            # if np.array_equal(q_new, q_goal):
-            #     break
+            # Print statement helps keep visual progress through npoints
+            # print("indx_vertex_to_fill", indx_vertex_to_fill)
 
-            if pose_dist(q_new, q_goal) < 0.5:
-                print("FOUND THE GOAL")
-                break
+            indx_vertex_to_fill += 1
 
-            if i_vertex_to_fill == npoints - 1:
-                print("did not find goal...")
-                break
+    path_end_vertex_index = 1
 
-            i_vertex_to_fill += 1
+    total_cost_to_goal = np.Inf
 
-    path_found, path = trace_path(
-        i_vertex_to_fill, vertices, parent_indices, npoints
-    )
+    # Find the first node which is effectively the goal
+    path_found = False
+    for i in range(vertices.shape[0]):
+        if pose_dist(vertices[i], q_goal) < 0.5 and np.abs(vertices[i, 2] - q_goal[2]) < pi / 2:
+            print("FOUND THE GOAL! At node", i)
+            cost_to_goal = total_path_cost(i)
+            if cost_to_goal < total_cost_to_goal:
+                path_end_vertex_index = i
+                path_found = True
+                total_cost_to_goal = cost_to_goal
 
-    final_path_nodes = path_indices(i_vertex_to_fill, parent_indices, npoints)
+    if not path_found:
+        indx_vertex_to_fill = len(vertices) - 1
+
+    path_traced, path = trace_path(path_end_vertex_index, vertices, parent_indices, npoints)
+
+    final_path_nodes = path_indices(path_end_vertex_index, parent_indices, npoints)
     path_segments = list(map(lambda i: edges[i], final_path_nodes))
     final_path = np.array(flatten(path_segments))
-    print("final_path", final_path)
-
-    # print(parent_indices)
-    # print(parent_indices[: i_vertex_to_fill + 1])
-
-    # print(vertices)
-    # print(vertices[: i_vertex_to_fill + 1])
-
-    # To visualize...
-    # - start
-    # - nodes in the graph
-    # - edges in the graph
 
     rrtTree = {}
     rrtTree["goal"] = q_goal
-    rrtTree["vertices"] = vertices[: i_vertex_to_fill + 1]
-    rrtTree["parent_indices"] = parent_indices[: i_vertex_to_fill + 1]
+    rrtTree["vertices"] = vertices[: indx_vertex_to_fill + 1]
+    rrtTree["parent_indices"] = parent_indices[: indx_vertex_to_fill + 1]
     rrtTree["edges"] = edges
     rrtTree["final_path"] = final_path
 
+    # New tree visualization for RRT* changes
+    # rrtTree["overwritten_edges"] = overwritten_edges
+    # rrtTree["new_edges"] = new_edges
+
+    # rrtTree["overwritten_edges"] = overwritten_edges[-1:]
+    # rrtTree["new_edges"] = new_edges[-1:]
+
     plot_rrt_tree(rrtTree)
 
-    return path_found, path
+    return path_found, path, total_cost_to_goal
